@@ -28,7 +28,7 @@ jobs:
           ruff check .
       - name: Static type checking
         run: |
-          mypy "vacation_day_tracker.py"
+          mypy "vacation_tracker.py"
       - name: Run tests
         run: pytest tests
 
