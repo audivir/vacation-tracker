@@ -9,7 +9,17 @@ import holidays
 import msgspec
 import pytest
 
-from vacation_tracker import Config, Vacation, add_or_show, cli, new, parse_args, show
+from vacation_tracker import (
+    Config,
+    Vacation,
+    _track_single_period,
+    add_or_show,
+    cli,
+    new,
+    parse_args,
+    show,
+    track_periods,
+)
 
 if TYPE_CHECKING:
     from pathlib import Path
@@ -36,7 +46,28 @@ def assumption_vacation(by_holidays: holidays.HolidayBase) -> Vacation:
 
 @pytest.fixture
 def config(christmas_vacation: Vacation, assumption_vacation: Vacation) -> Config:
-    return Config(2, (2022, 1), (2022, 12), [assumption_vacation, christmas_vacation])
+    return Config(2, (2022, 1), (2023, 12), [assumption_vacation, christmas_vacation])
+
+
+@pytest.fixture
+def config_summary() -> str:
+    return """\
+ Year  Months  Entitlement  Real Util  Adj Util    Remaining
+ 2022      12           24          4         4 20 (expired)
+ 2023      12           24          0         0 24 (expired)
+"""
+
+
+@pytest.fixture
+def config_detailed() -> str:
+    return """\
+ Year  Months  Entitlement  Real Util  Adj Util    Remaining
+ 2022      12           24          4         4 20 (expired)
+ ├─ 15.08 (0): assumption
+ └─ 25.12-31.12 (4): christmas
+ 2023      12           24          0         0 24 (expired)
+ └─ 01.01 (0): christmas
+"""
 
 
 def test_days(christmas_vacation: Vacation, assumption_vacation: Vacation) -> None:
@@ -94,15 +125,21 @@ def test_outside_tracking(christmas_vacation: Vacation) -> None:
         conf.verify()
 
 
-def test_show(config: Config, capsys: pytest.CaptureFixture) -> None:
-    show(config)
+@pytest.mark.parametrize(
+    ("detailed", "fixval"), [(True, "config_detailed"), (False, "config_summary")]
+)
+def test_show(
+    detailed: bool,
+    fixval: str,
+    config: Config,
+    capsys: pytest.CaptureFixture,
+    request: pytest.FixtureRequest,
+) -> None:
+    show(config, detailed=detailed)
     outerr = capsys.readouterr()
-    summary = " Year  Months  Entitlement  Utilisation  Remaining\n 2022      12           24            4         20\n"  # noqa: E501
-    assert outerr.out == summary
-    detailed = " ├─ 15.08 (0): assumption\n └─ 25.12-31.12 (4): christmas\n"
-    show(config, detailed=True)
-    outerr = capsys.readouterr()
-    assert outerr.out == summary + detailed
+
+    expected = request.getfixturevalue(fixval)
+    assert outerr.out == expected
 
 
 def test_parse_args() -> None:
@@ -173,7 +210,10 @@ def test_add_or_show_show(
         cli(["show", "-f", str(test_toml)])
     else:
         add_or_show("show", test_toml, detailed=False)
-    summary = " Year  Months  Entitlement  Utilisation  Remaining\n 2022      12           24            0         24\n"  # noqa: E501
+    summary = """\
+ Year  Months  Entitlement  Real Util  Adj Util    Remaining
+ 2022      12           24          0         0 24 (expired)
+"""
     outerr = capsys.readouterr()
     assert outerr.out == summary
 
@@ -198,3 +238,60 @@ def test_add_or_show_add(use_cli: bool, test_toml: Path) -> None:
             {"name": "test", "first": date(2022, 1, 1), "last": date(2022, 1, 2)}
         ],
     }
+
+
+@pytest.mark.parametrize(
+    ("on", "split_dates"),
+    [
+        (
+            date(2022, 12, 31),
+            [
+                (date(2022, 12, 25), date(2022, 12, 31)),
+                (date(2023, 1, 1), date(2023, 1, 1)),
+            ],
+        ),
+        (date(2023, 1, 1), [(date(2022, 12, 25), date(2023, 1, 1))]),
+    ],
+)
+def test_split(
+    on: date, split_dates: list[tuple[date, date]], christmas_vacation: Vacation
+) -> None:
+    splits = christmas_vacation.split(on)
+    assert [(x.first, x.real_last) for x in splits] == split_dates
+
+
+def test_track_single_period() -> None:
+    track_dict = {2022: 2.5, 2023: 3.5}
+    days = _track_single_period(2022, 2, track_dict)
+    assert days == 0
+    assert track_dict == {2022: 0.5, 2023: 3.5}
+    days = _track_single_period(2022, 2, track_dict)
+    assert days == 1.5
+    assert track_dict == {2022: 0, 2023: 3.5}
+
+
+def test_track_periods(christmas_vacation: Vacation) -> None:
+    track_dict = {2022: 2.5, 2023: 3.5}
+    track_periods(
+        [Vacation("test", date(2022, 12, 23), None, christmas_vacation.holidays)],
+        track_dict,
+    )
+    assert track_dict == {2022: 1.5, 2023: 3.5}
+    splits = christmas_vacation.split(date(2022, 12, 31))
+    track_periods(splits, track_dict)
+    assert track_dict == {2022: 0, 2023: 1}
+    track_dict = {2022: 1, 2023: 1}
+    with pytest.raises(ValueError, match="No more vacation days"):
+        track_periods(splits, track_dict)
+
+
+def test_vacation_verify(christmas_vacation: Vacation) -> None:
+    with pytest.raises(ValueError, match="Split periods on Silvester"):
+        christmas_vacation.verify()
+    vac = Vacation("test", date(2022, 9, 27), date(2022, 10, 27))
+    with pytest.raises(ValueError, match="Split periods on 30th of September"):
+        vac.verify()
+    first, *_ = christmas_vacation.split(date(2022, 12, 31))
+    year, exdate = first.verify()
+    assert year == 2022
+    assert exdate == date(2022, 9, 30)

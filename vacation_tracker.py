@@ -82,6 +82,28 @@ class Vacation(msgspec.Struct, forbid_unknown_fields=True, omit_defaults=True):
             return f"{first_day} ({self.days}): {self.name}"
         return f"{first_day}-{last_day} ({self.days}): {self.name}"
 
+    def split(self, on: date) -> tuple[Vacation] | tuple[Vacation, Vacation]:
+        """Split date on the provided date."""
+        # split date outside this period, last date is included.
+        if on < self.first or on >= self.real_last:
+            return (self,)
+
+        before = Vacation(self.name, self.first, on, self.holidays)
+        after = Vacation(
+            self.name, on + timedelta(days=1), self.real_last, self.holidays
+        )
+        return before, after
+
+    def verify(self) -> tuple[int, date]:
+        """Verify splits on year ends and exdate."""
+        year = self.first.year
+        if year != self.real_last.year:
+            raise ValueError("Split periods on Silvester")
+        exdate = date(year, 9, 30)
+        if self.first <= exdate and self.real_last > exdate:
+            raise ValueError("Split periods on 30th of September")
+        return year, exdate
+
 
 class Config(
     msgspec.Struct,
@@ -147,8 +169,83 @@ class Config(
             if self.last_year[1] == 12  # noqa: PLR2004
             else date(self.last_year[0], self.last_year[1] + 1, 1)
         )
-        if last_day.real_last > last_year:
+        if last_day.real_last >= last_year:
             raise ValueError("Last vacation day after tracking end")
+
+    def _get_entitlement(self) -> dict[int, tuple[float | int, int]]:
+        first_year, first_month = self.first_year
+        last_year, last_month = self.last_year
+
+        entitlement_dict: dict[int, tuple[float | int, int]] = {}
+
+        for year in range(first_year, last_year + 1):
+            curr_first_month = first_month if year == first_year else 1
+            curr_last_month = last_month if year == last_year else 12
+            months = 1 + curr_last_month - curr_first_month  # + 1 to include last month
+            entitlement = months * self.days_per_month
+            # just for visuals
+            if (
+                isinstance(entitlement, float) and entitlement.is_integer()
+            ):  # pragma: no cover
+                entitlement = int(entitlement)
+            entitlement_dict[year] = entitlement, months
+
+        return entitlement_dict
+
+    def _order_periods(self) -> tuple[list[Vacation], dict[int, list[Vacation]]]:
+        self.verify()  # sorts vacation days
+
+        vacation_periods_dict: dict[int, list[Vacation]] = defaultdict(list)
+        for day in self.vacation_periods:
+            day.holidays = self.holidays
+            curr_day: Vacation | None = day
+            for year in range(day.first.year, day.real_last.year + 1):
+                if curr_day is None:  # pragma: no cover
+                    raise RuntimeError("should not happen")
+                splits = curr_day.split(date(year, 12, 31))
+                if not 1 <= len(splits) <= 2:  # pragma: no cover # noqa: PLR2004
+                    raise RuntimeError("should not happen")
+                this_year, curr_day = splits if len(splits) == 2 else (splits[0], None)  # noqa: PLR2004
+                vacation_periods_dict[year].extend(this_year.split(date(year, 9, 30)))
+        vacation_periods = [
+            day
+            for year_periods in vacation_periods_dict.values()
+            for day in year_periods
+        ]
+        return vacation_periods, vacation_periods_dict
+
+
+def _track_single_period(
+    year: int, days: float, track_dict: dict[int, float | int]
+) -> float | int:
+    """Try to remove `days` from `year`'s entry in `track_dict`."""
+    if (avail := track_dict.get(year, 0)) > 0:
+        if avail < days:
+            prev_days = avail
+            days -= avail
+        else:
+            prev_days = days
+            days = 0
+        track_dict[year] -= prev_days
+
+    return days
+
+
+def track_periods(
+    periods: Sequence[Vacation], track_dict: dict[int, float | int]
+) -> None:
+    """Track vacation `periods` using available days from `track_dict`."""
+    for period in periods:
+        year, exdate = period.verify()
+        first_year = year - 1 if period.real_last <= exdate else year
+
+        days: float | int = period.days
+        for year in range(first_year, max(track_dict) + 1):
+            days = _track_single_period(year, days, track_dict)
+            if days == 0:
+                break
+        else:
+            raise ValueError("No more vacation days.")
 
 
 def show(config: Config, detailed: bool = False) -> None:
@@ -159,39 +256,44 @@ def show(config: Config, detailed: bool = False) -> None:
         detailed: Show each vacation period additional to the summary.
             Defaults to False.
     """
-    config.verify()  # sorts vacation days
+    vacation_periods, vacation_periods_dict = config._order_periods()  # noqa: SLF001
 
-    first_year, first_month = config.first_year
-    last_year, last_month = config.last_year
+    entitlement_dict = config._get_entitlement()  # noqa: SLF001
 
-    rows: list[tuple[int, int, float | int, float | int, float | int]] = []
-    vacation_periods_dict: dict[int, list[Vacation]] = defaultdict(list)
-    for day in config.vacation_periods:
-        if day.first.year == day.real_last.year:
-            day.holidays = config.holidays
-            vacation_periods_dict[day.first.year].append(day)
-            continue
-        for year in range(day.first.year, day.real_last.year + 1):
-            first_date = day.first if year == day.first.year else date(year, 1, 1)
-            last_date = day.last if year == day.real_last.year else date(year, 12, 31)
-            vacation_periods_dict[year].append(
-                Vacation(day.name, first_date, last_date, config.holidays)
+    remaining_dict = {
+        year: entitlement for year, (entitlement, _) in entitlement_dict.items()
+    }
+
+    track_periods(vacation_periods, remaining_dict)
+
+    rows: list[
+        tuple[int, int, float | int, float | int, float | int, float | int | str]
+    ] = []
+
+    now = datetime.now(tz=timezone.utc)
+    threshold_year = now.year - (1 if now.date() > date(now.year, 9, 30) else 2)
+    for year, (entitlement, months) in entitlement_dict.items():
+        remaining = remaining_dict[year]
+        real_utilisation = sum(day.days for day in vacation_periods_dict[year])
+        adjusted_utilisation = entitlement - remaining
+
+        remaining_str = (
+            f"{remaining} (expired)"
+            if year <= threshold_year and remaining > 0
+            else remaining
+        )
+        rows.append(
+            (
+                year,
+                months,
+                entitlement,
+                real_utilisation,
+                adjusted_utilisation,
+                remaining_str,
             )
+        )
 
-    for year in range(first_year, last_year + 1):
-        curr_first_month = first_month if year == first_year else 1
-        curr_last_month = last_month if year == last_year else 12
-        months = 1 + curr_last_month - curr_first_month  # + 1 to include last month
-        entitlement = months * config.days_per_month
-        if (
-            isinstance(entitlement, float) and entitlement.is_integer()
-        ):  # pragma: no cover
-            entitlement = int(entitlement)
-        utilisation = sum(day.days for day in vacation_periods_dict[year])
-        remaining = entitlement - utilisation
-        rows.append((year, months, entitlement, utilisation, remaining))
-
-    columns = "Year", "Months", "Entitlement", "Utilisation", "Remaining"
+    columns = ("Year", "Months", "Entitlement", "Real Util", "Adj Util", "Remaining")
     final_df = pd.DataFrame(rows, columns=columns)
 
     lines = final_df.to_string(index=False).splitlines()
