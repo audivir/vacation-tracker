@@ -3,6 +3,7 @@
 # ruff: noqa: T201
 from __future__ import annotations
 
+import logging
 from argparse import ArgumentParser, Namespace
 from collections import defaultdict
 from datetime import date, datetime, timedelta, timezone
@@ -16,6 +17,8 @@ from typing_extensions import override
 
 if TYPE_CHECKING:
     from collections.abc import Sequence
+
+logger = logging.getLogger(__name__)
 
 MARKER = " ├─"
 LAST = " └─"
@@ -54,8 +57,14 @@ class Vacation(msgspec.Struct, forbid_unknown_fields=True, omit_defaults=True):
         for add in range(delta.days + 1):
             new_date = self.first + timedelta(days=add)
             if new_date.weekday() > 4:  # only monday to friday # noqa: PLR2004
+                logger.debug("%s skipped: weekend.", new_date.strftime("%d.%m.%Y"))
                 continue
             if new_date in self.holidays:
+                logger.debug(
+                    "%s skipped: %s",
+                    new_date.strftime("%d.%m.%Y"),
+                    self.holidays[new_date],
+                )
                 continue
             counter += 1
         return counter
@@ -214,6 +223,7 @@ class TypedNamespace(Namespace):
     detailed: bool
 
     file: Path
+    verbose: bool
 
 
 def parse_args(argv: Sequence[str] | None = None) -> TypedNamespace:
@@ -257,6 +267,7 @@ def parse_args(argv: Sequence[str] | None = None) -> TypedNamespace:
         "-d",
         "--detailed",
         action="store_true",
+        default=False,
         help="Show each vacation period. Defaults to summary only.",
     )
     for subparser in (new_parser, add_parser, show_parser):
@@ -266,6 +277,13 @@ def parse_args(argv: Sequence[str] | None = None) -> TypedNamespace:
             type=Path,
             default=Path("vacation-periods.toml"),
             help="Storage file of the vacation periods. Defaults to vacation-periods.toml.",  # noqa: E501
+        )
+        subparser.add_argument(
+            "-v",
+            "--verbose",
+            action="store_true",
+            default=False,
+            help="Turn on debugging messages.",
         )
 
     args: TypedNamespace = parser.parse_args(argv)  # type: ignore[assignment]
@@ -310,10 +328,15 @@ def cli(argv: Sequence[str] | None = None) -> int:
     """Track vacation periods."""
     args = parse_args(argv)
 
+    if args.verbose:  # pragma: no cover
+        logging.basicConfig(level=logging.DEBUG)
+
     if args.cmd == "new":
         new(args.file, args.days, (args.first_year, args.first_month), args.last_year)
     elif args.cmd in {"add", "show"}:
-        add_or_show(**dict(args._get_kwargs()))  # noqa: SLF001
+        kwargs = dict(args._get_kwargs())  # noqa: SLF001
+        del kwargs["verbose"]
+        add_or_show(**kwargs)
     else:  # pragma: no cover
         raise ValueError(f"Unknown command: {args.cmd}")
     return 0
