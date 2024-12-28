@@ -31,27 +31,24 @@ TREE_LAST = " └─"
 WEEKEND_DAYS = (5, 6)  # Saturday and Sunday
 
 MonthSpecifier: TypeAlias = Annotated[int, msgspec.Meta(ge=1, le=12)]
-
+"""Integer between 1 and 12 (including)."""
 
 class Vacation(msgspec.Struct, forbid_unknown_fields=True, omit_defaults=True):
     """Represents a single vacation period with start and end dates.
 
     This class handles vacation period validation, holiday checking, and day counting.
 
-    Attributes:
-        name: Name or description of the vacation period
-        first: First day of the vacation period
-        last: Last day of the vacation period (optional)
-        holidays: Holiday calendar for day counting
-
     Raises:
         ValueError: If last date is before first date
     """
-
     name: str
+    """Name or description of the vacation period"""
     first: date
+    """First day of the vacation period"""
     last: date | None = None
+    """Last day of the vacation period (optional)"""
     holidays: holidays.HolidayBase | None = None
+    """Holiday calendar for day counting"""
 
     def __post_init__(self) -> None:
         """Validate vacation period dates."""
@@ -166,23 +163,20 @@ class Config(
         "vacation_periods": "vacation-periods",
     },
 ):
-    """Configuration for vacation tracking.
-
-    Attributes:
-        days_per_month: Vacation days earned per month
-        first_year: (year, month) tuple for start of tracking
-        last_year: (year, month) tuple for end of tracking
-        vacation_periods: List of vacation periods to track
-        country: Country code(s) for holiday calendar
-        categories: Categories of holidays to include
-    """
+    """Configuration for vacation tracking."""
 
     days_per_month: float | int
+    """Vacation days earned per month"""
     first_year: tuple[int, MonthSpecifier]
+    """(year, month) tuple for start of tracking"""
     last_year: tuple[int, MonthSpecifier]
+    """(year, month) tuple for end of tracking"""
     vacation_periods: list[Vacation] = []
+    """List of vacation periods to track"""
     country: str | tuple[str, str | None] = ("DE", "BY")
+    """Country code(s) for holiday calendar"""
     categories: tuple[str, ...] = ("public", "catholic")
+    """Categories of holidays to include"""
 
     @property
     def holidays(self) -> holidays.HolidayBase:
@@ -384,7 +378,7 @@ def show(config: Config, detailed: bool = False) -> None:
                 print(marker, period)  # noqa: T201
 
 
-class TypedNamespace(Namespace):
+class _TypedNamespace(Namespace):
     """Type hints for command line arguments."""
 
     cmd: Literal["new", "add", "show"]
@@ -400,7 +394,7 @@ class TypedNamespace(Namespace):
     verbose: bool
 
 
-def parse_args(argv: Sequence[str] | None = None) -> TypedNamespace:
+def parse_args(argv: Sequence[str] | None = None) -> _TypedNamespace:
     """Parse command line arguments.
 
     Args:
@@ -481,7 +475,7 @@ def parse_args(argv: Sequence[str] | None = None) -> TypedNamespace:
             help="Enable debug logging output",
         )
 
-    args: TypedNamespace = parser.parse_args(argv)  # type: ignore[assignment]
+    args: _TypedNamespace = parser.parse_args(argv)  # type: ignore[assignment]
 
     if args.file.suffix != ".toml":
         raise ValueError("Configuration file must have .toml extension")
