@@ -1,12 +1,13 @@
 """Generate the code reference page for a single py-module."""
 
+# ruff: noqa: INP001, F821
 from __future__ import annotations
 
 from pathlib import Path
 
 import mkdocs_gen_files
 
-source_layout = False
+source_layout = False # type: ignore[reportUndefinedVariable]
 package_name = "vacation-tracker"
 
 
@@ -31,13 +32,13 @@ if not source_layout:
         mkdocs_gen_files.set_edit_path(doc_path, ".." / module_path.relative_to(root))
 
 else:
-    nav = mkdocs_gen_files.Nav()
+    nav = mkdocs_gen_files.Nav()  # type: ignore[no-untyped-call]
 
     src = root / "src"
 
     for path in sorted(src.rglob("*.py")):
         module_path = path.relative_to(src).with_suffix("")
-        doc_path = path.relative_to(src / mangled(package_name)).with_suffix(".md")
+        doc_path = path.relative_to(src / mangled_package).with_suffix(".md")
         full_doc_path = Path("reference", doc_path)
 
         parts = tuple(module_path.parts)

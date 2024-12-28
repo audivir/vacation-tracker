@@ -25,6 +25,9 @@ classifiers = [
     "Programming Language :: Python :: 3",
 ]
 
+[project.urls]
+repository = "https://github.com/tim25651/vacation-tracker"
+
 [project.optional-dependencies]
 dev = ["coverage[toml]", "mypy", "pylint", "pytest"]
 
@@ -52,7 +55,7 @@ warn_unreachable = true
 exclude = ["build", "docs"]
 
 [tool.coverage.run]
-source = ["vacation_tracker"]
+source = ["vacation_tracker.py"]
 command_line = "-m pytest"
 branch = true
 

@@ -1,132 +1,123 @@
 site_name: "vacation-tracker"
-site_description: "Track and manage vacation periods with support for holidays and date ranges."
-site_url: "https://vacation-tracker.github.io/"
+site_description: "Track number of remaining vacation days."
 repo_url: "https://github.com/tim25651/vacation-tracker"
 repo_name: "tim25651/vacation-tracker"
 site_dir: "site"
-watch: [mkdocs.yml, README.md, vacation_tracker.py]
+watch: ["mkdocs.yml", "README.md", "vacation_tracker.py"]
 copyright: Copyright &copy; 2024 Tim Hörmann
 edit_uri: edit/main/docs/
-
 validation:
   omitted_files: warn
   absolute_links: warn
   unrecognized_links: warn
-
 nav:
-- Home:
-  - Overview: index.md
-  - License: license.md
-# defer to gen-files + literate-nav
-- API reference:
-  - vacation_tracker: reference/
-
+  - Home:
+      - Overview: index.md
+      - License: license.md
+  # defer to gen-files + literate-nav
+  - API reference:
+      - vacation_tracker: reference/
 theme:
   name: material
   logo: logo.svg
   features:
-  - announce.dismiss
-  - content.action.edit
-  - content.action.view
-  - content.code.annotate
-  - content.code.copy
-  - content.tooltips
-  - navigation.footer
-  - navigation.indexes
-  - navigation.sections
-  - navigation.tabs
-  - navigation.tabs.sticky
-  - navigation.top
-  - search.highlight
-  - search.suggest
-  - toc.follow
+    - announce.dismiss
+    - content.action.edit
+    - content.action.view
+    - content.code.annotate
+    - content.code.copy
+    - content.tooltips
+    - navigation.footer
+    - navigation.indexes
+    - navigation.sections
+    - navigation.tabs
+    - navigation.tabs.sticky
+    - navigation.top
+    - search.highlight
+    - search.suggest
+    - toc.follow
   palette:
-  - media: "(prefers-color-scheme)"
-    toggle:
-      icon: material/brightness-auto
-      name: Switch to light mode
-  - media: "(prefers-color-scheme: light)"
-    scheme: default
-    primary: teal
-    accent: purple
-    toggle:
-      icon: material/weather-sunny
-      name: Switch to dark mode
-  - media: "(prefers-color-scheme: dark)"
-    scheme: slate
-    primary: black
-    accent: lime
-    toggle:
-      icon: material/weather-night
-      name: Switch to system preference
-
+    - media: "(prefers-color-scheme)"
+      toggle:
+        icon: material/brightness-auto
+        name: Switch to light mode
+    - media: "(prefers-color-scheme: light)"
+      scheme: default
+      primary: teal
+      accent: purple
+      toggle:
+        icon: material/weather-sunny
+        name: Switch to dark mode
+    - media: "(prefers-color-scheme: dark)"
+      scheme: slate
+      primary: black
+      accent: lime
+      toggle:
+        icon: material/weather-night
+        name: Switch to system preference
 extra_css:
-- style.css
-
+  - style.css
 markdown_extensions:
-- attr_list
-- admonition
-- callouts:
-    strip_period: false
-- footnotes
-- pymdownx.details
-- pymdownx.emoji:
-    emoji_index: !!python/name:material.extensions.emoji.twemoji
-    emoji_generator: !!python/name:material.extensions.emoji.to_svg
-- pymdownx.highlight:
-    pygments_lang_class: true
-- pymdownx.magiclink
-- pymdownx.snippets:
-    base_path: [!relative $config_dir]
-    check_paths: true
-- pymdownx.superfences
-- pymdownx.tabbed:
-    alternate_style: true
-    slugify: !!python/object/apply:pymdownx.slugs.slugify
-      kwds:
-        case: lower
-- pymdownx.tasklist:
-    custom_checkbox: true
-- pymdownx.tilde
-- toc:
-    permalink: "¤"
-
+  - attr_list
+  - admonition
+  - callouts:
+      strip_period: false
+  - footnotes
+  - pymdownx.details
+  - pymdownx.emoji:
+      emoji_index: !!python/name:material.extensions.emoji.twemoji
+      emoji_generator: !!python/name:material.extensions.emoji.to_svg
+  - pymdownx.highlight:
+      pygments_lang_class: true
+  - pymdownx.magiclink
+  - pymdownx.snippets:
+      base_path: [!relative $config_dir]
+      check_paths: true
+  - pymdownx.superfences
+  - pymdownx.tabbed:
+      alternate_style: true
+      slugify: !!python/object/apply:pymdownx.slugs.slugify
+        kwds:
+          case: lower
+  - pymdownx.tasklist:
+      custom_checkbox: true
+  - pymdownx.tilde
+  - toc:
+      permalink: "¤"
 plugins:
-- search
-- markdown-exec
-- gen-files:
-    scripts:
-    - scripts/gen_ref_nav.py
-- literate-nav:
-    nav_file: SUMMARY.md
-- mkdocstrings:
-    handlers:
-      python:
-        load_external_modules: true
-        paths: [vacation_tracker.py]
-        options:
-          docstring_options:
-            ignore_init_summary: true
-          docstring_section_style: table
-          filters: ["!^_"]
-          heading_level: 1
-          inherited_members: true
-          merge_init_into_class: true
-          parameter_headings: true
-          separate_signature: true
-          show_root_heading: true
-          show_root_full_path: false
-          show_signature_annotations: true
-          show_source: false
-          show_symbol_type_heading: true
-          show_symbol_type_toc: true
-          signature_crossrefs: true
-          summary: true
-          extensions:
-          - griffe_fieldz
-
-
+  - search
+  - markdown-exec
+  - gen-files:
+      scripts:
+        - scripts/gen_ref_nav.py
+  - literate-nav:
+      nav_file: SUMMARY.md
+  - mkdocstrings:
+      handlers:
+        python:
+          load_external_modules: true
+          paths: ["vacation_tracker.py"]
+          options:
+            docstring_options:
+              ignore_init_summary: true
+            docstring_section_style: table
+            filters: ["!^_"]
+            heading_level: 1
+            inherited_members: true
+            merge_init_into_class: true
+            parameter_headings: true
+            separate_signature: true
+            show_root_heading: true
+            show_root_full_path: false
+            show_signature_annotations: true
+            show_source: false
+            show_symbol_type_heading: true
+            show_symbol_type_toc: true
+            signature_crossrefs: true
+            summary: true
+            extensions:
+              - griffe_fieldz
 extra:
   social:
-  - icon: fontawesome/brands/github
-    link: https://github.com/tim25651/vacation-tracker
+    - icon: fontawesome/brands/github
+      link: https://github.com/tim25651/vacation-tracker

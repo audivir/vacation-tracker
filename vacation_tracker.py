@@ -33,6 +33,7 @@ WEEKEND_DAYS = (5, 6)  # Saturday and Sunday
 MonthSpecifier: TypeAlias = Annotated[int, msgspec.Meta(ge=1, le=12)]
 """Integer between 1 and 12 (including)."""
 
+
 class Vacation(msgspec.Struct, forbid_unknown_fields=True, omit_defaults=True):
     """Represents a single vacation period with start and end dates.
 
@@ -41,6 +42,7 @@ class Vacation(msgspec.Struct, forbid_unknown_fields=True, omit_defaults=True):
     Raises:
         ValueError: If last date is before first date
     """
+
     name: str
     """Name or description of the vacation period"""
     first: date
