@@ -9,21 +9,29 @@ and displaying vacation summaries.
 from __future__ import annotations
 
 import logging
-from argparse import ArgumentParser, Namespace
+import sys
 from collections import defaultdict
 from datetime import date, datetime, timedelta, timezone
 from pathlib import Path
-from typing import TYPE_CHECKING, Annotated, Any, Literal, TypeAlias
+from typing import TYPE_CHECKING, Annotated, Optional
 
+import doctyper
+
+if sys.version_info >= (3, 10):  # pragma: no cover
+    from typing import TypeAlias
+else:
+    from typing_extensions import TypeAlias
 import holidays
 import msgspec
-import pandas as pd
+import polars as pl
 from typing_extensions import override
 
 if TYPE_CHECKING:
     from collections.abc import MutableMapping, Sequence
 
 logger = logging.getLogger(__name__)
+
+__version__ = "0.1.0"
 
 # Constants
 TREE_MARKER = " ├─"
@@ -54,6 +62,8 @@ class Vacation(msgspec.Struct, forbid_unknown_fields=True, omit_defaults=True):
 
     def __post_init__(self) -> None:
         """Validate vacation period dates."""
+        if not self.name.strip():
+            raise ValueError("Vacation name cannot be empty")
         if self.last and self.last < self.first:
             raise ValueError("Last date cannot be before first date")
 
@@ -82,9 +92,7 @@ class Vacation(msgspec.Struct, forbid_unknown_fields=True, omit_defaults=True):
 
             if current_date in self.holidays:
                 logger.debug(
-                    "%s skipped: %s",
-                    current_date.strftime("%d.%m.%Y"),
-                    self.holidays[current_date],
+                    "%s skipped: %s", current_date.strftime("%d.%m.%Y"), self.holidays[current_date]
                 )
                 continue
 
@@ -126,9 +134,7 @@ class Vacation(msgspec.Struct, forbid_unknown_fields=True, omit_defaults=True):
             return (self,)
 
         before = Vacation(self.name, self.first, on, self.holidays)
-        after = Vacation(
-            self.name, on + timedelta(days=1), self.real_last, self.holidays
-        )
+        after = Vacation(self.name, on + timedelta(days=1), self.real_last, self.holidays)
         return before, after
 
     def verify(self) -> tuple[int, date]:
@@ -236,9 +242,7 @@ class Config(
             months = 1 + curr_last_month - curr_first_month
 
             entitlement = months * self.days_per_month
-            if (
-                isinstance(entitlement, float) and entitlement.is_integer()
-            ):  # pragma: no cover
+            if isinstance(entitlement, float) and entitlement.is_integer():  # pragma: no cover
                 entitlement = int(entitlement)
 
             entitlements[year] = (entitlement, months)
@@ -272,9 +276,7 @@ class Config(
                 periods_by_year[year].extend(this_year.split(date(year, 9, 30)))
 
         all_periods = [
-            period
-            for year_periods in periods_by_year.values()
-            for period in year_periods
+            period for year_periods in periods_by_year.values() for period in year_periods
         ]
         return all_periods, periods_by_year
 
@@ -322,22 +324,42 @@ def track_periods(
 
         remaining_days: float | int = period.days
         for tracking_year in range(first_year, max(track_dict) + 1):
-            remaining_days = _track_single_period(
-                tracking_year, remaining_days, track_dict
-            )
+            remaining_days = _track_single_period(tracking_year, remaining_days, track_dict)
             if remaining_days == 0:
                 break
         else:
             raise ValueError("Insufficient vacation days available")
 
 
-def show(config: Config, detailed: bool = False) -> None:
-    """Display vacation period summary and details.
+def _verify_config(file: Path) -> Config:
+    """Verify that the configuration file exists and is valid.
 
     Args:
-        config: Vacation tracking configuration
-        detailed: Whether to show individual vacation periods
+        file: Path to the configuration file
+
+    Returns:
+        The configuration object if valid
+
+    Raises:
+        FileNotFoundError: If configuration file doesn't exist
+        ValidationError: If configuration file is invalid
     """
+    if not file.exists():
+        raise FileNotFoundError(
+            f"Configuration file {file} not found. Use 'vacation-tracker new' to create."
+        )
+    content = msgspec.toml.decode(file.read_bytes())
+    return msgspec.convert(content, Config)
+
+
+def show(detailed: bool = False, config_file: Path = Path("vacation-periods.toml")) -> None:
+    """Display vacation period summary (and details).
+
+    Args:
+        detailed: Whether to show individual vacation periods
+        config_file: Path to vacation tracking configuration
+    """
+    config = _verify_config(config_file)
     periods, periods_by_year = config._order_periods()  # noqa: SLF001
     entitlements = config._get_entitlement()  # noqa: SLF001
 
@@ -345,9 +367,7 @@ def show(config: Config, detailed: bool = False) -> None:
 
     track_periods(periods, remaining)
 
-    rows: list[
-        tuple[int, int, float | int, float | int, float | int, float | int | str]
-    ] = []
+    rows: list[tuple[int, int, float | int, float | int, float | int, float | int | str]] = []
 
     now = datetime.now(tz=timezone.utc)
     threshold_year = now.year - (1 if now.date() > date(now.year, 9, 30) else 2)
@@ -366,206 +386,106 @@ def show(config: Config, detailed: bool = False) -> None:
         rows.append((year, months, entitlement, utilized, adjusted, remaining_str))
 
     columns = ("Year", "Months", "Entitlement", "Real Util", "Adj Util", "Remaining")
-    show_df = pd.DataFrame(rows, columns=columns)
+    show_df = pl.DataFrame(rows, schema=columns, orient="row")
 
-    lines = show_df.to_string(index=False).splitlines()
-    print(lines[0])  # noqa: T201
+    pl.Config.set_tbl_hide_dataframe_shape(True)
+    pl.Config.set_tbl_formatting("NOTHING")
+    pl.Config.set_tbl_hide_column_data_types(True)
 
-    for row, line in zip(show_df.itertuples(index=False), lines[1:], strict=True):
-        print(line)  # noqa: T201
+    lines = str(show_df).splitlines()
+    print(lines[0].rstrip("\n "))  # noqa: T201
+
+    for row, line in zip(show_df.iter_rows(named=True), lines[1:]):
+        print(line.rstrip("\n "))  # noqa: T201
         if detailed:
-            year_periods = periods_by_year[row.Year]
+            year_periods = periods_by_year[row["Year"]]
             for idx, period in enumerate(year_periods):
                 marker = TREE_MARKER if idx < len(year_periods) - 1 else TREE_LAST
                 print(marker, period)  # noqa: T201
 
 
-class _TypedNamespace(Namespace):
-    """Type hints for command line arguments."""
-
-    cmd: Literal["new", "add", "show"]
-    days: float
-    first_year: int
-    first_month: int
-    last_year: tuple[int, int]
-    name: str
-    first: str
-    last: str | None
-    detailed: bool
-    file: Path
-    verbose: bool
-
-
-def parse_args(argv: Sequence[str] | None = None) -> _TypedNamespace:
-    """Parse command line arguments.
-
-    Args:
-        argv: Command line arguments (defaults to sys.argv[1:])
-
-    Returns:
-        Parsed arguments namespace
-
-    Raises:
-        ValueError: If specified file doesn't have .toml extension
-    """
-    parser = ArgumentParser(description="Track and manage vacation periods")
-    subparsers = parser.add_subparsers(dest="cmd", required=True)
-
-    # New command
-    new_parser = subparsers.add_parser(
-        "new", help="Create new vacation tracking configuration"
-    )
-    new_parser.add_argument("days", type=float, help="Vacation days earned per month")
-    new_parser.add_argument(
-        "first_year", type=int, help="First year to track vacation days"
-    )
-    new_parser.add_argument(
-        "first_month", type=int, help="First month to track vacation days"
-    )
-    new_parser.add_argument(
-        "-l",
-        "--last-year",
-        nargs=2,
-        type=int,
-        metavar=("year", "month"),
-        default=(datetime.now(tz=timezone.utc).year, 12),
-        help="Last year and month to track vacation days (default: end of current year)",  # noqa: E501
-    )
-
-    # Add command
-    add_parser = subparsers.add_parser("add", help="Add a new vacation period")
-    add_parser.add_argument(
-        "name", type=str, help="Name or description of the vacation period"
-    )
-    add_parser.add_argument(
-        "first", type=str, help="First day of the vacation period (ISO format)"
-    )
-    add_parser.add_argument(
-        "-l",
-        "--last",
-        type=str,
-        default=None,
-        help="Last day of the vacation period (ISO format, default: same as first day)",
-    )
-
-    # Show command
-    show_parser = subparsers.add_parser(
-        "show", help="Display vacation tracking summary"
-    )
-    show_parser.add_argument(
-        "-d",
-        "--detailed",
-        action="store_true",
-        default=False,
-        help="Show individual vacation periods (default: summary only)",
-    )
-
-    # Common arguments
-    for subparser in (new_parser, add_parser, show_parser):
-        subparser.add_argument(
-            "-f",
-            "--file",
-            type=Path,
-            default=Path("vacation-periods.toml"),
-            help="Path to vacation periods storage file (default: vacation-periods.toml)",  # noqa: E501
-        )
-        subparser.add_argument(
-            "-v",
-            "--verbose",
-            action="store_true",
-            default=False,
-            help="Enable debug logging output",
-        )
-
-    args: _TypedNamespace = parser.parse_args(argv)  # type: ignore[assignment]
-
-    if args.file.suffix != ".toml":
-        raise ValueError("Configuration file must have .toml extension")
-
-    return args
-
-
-def new(file: Path, days: float, first: tuple[int, int], last: tuple[int, int]) -> None:
+def new(
+    days: float,
+    first_year: int,
+    first_month: int,
+    last_year: int = datetime.now(tz=timezone.utc).year,
+    last_month: int = 12,
+    config_file: Path = Path("vacation-periods.toml"),
+) -> None:
     """Create a new vacation tracking configuration file.
 
     Args:
-        file: Path to the configuration file
         days: Number of vacation days earned per month
-        first: Tuple of (year, month) for start of tracking
-        last: Tuple of (year, month) for end of tracking
+        first_year: First year to track vacation days
+        first_month: First month to track vacation days
+        last_year: Last year to track vacation days
+        last_month: Last month to track vacation days
+        config_file: Path to the vacation tracking configuration file
 
     Raises:
         FileExistsError: If configuration file already exists
     """
-    if file.exists():
+    if config_file.exists():
         raise FileExistsError(
-            f"Configuration file {file} already exists. Edit manually if needed."
+            f"Configuration file {config_file} already exists. Edit manually if needed."
         )
+    if config_file.suffix != ".toml":
+        raise ValueError("Configuration file must have .toml extension")
+    if not 0 < days <= 31:  # noqa: PLR2004
+        raise ValueError("Days per month must be between 1 and 31")
+    if not 1 <= first_month <= 12:  # noqa: PLR2004
+        raise ValueError("First month must be between 1 and 12")
+    if not 1 <= last_month <= 12:  # noqa: PLR2004
+        raise ValueError("Last month must be between 1 and 12")
 
     config = msgspec.convert(
-        {"days-per-month": days, "first-year": first, "last-year": last}, Config
+        {
+            "days-per-month": days,
+            "first-year": (first_year, first_month),
+            "last-year": (last_year, last_month),
+        },
+        Config,
     )
-    file.write_bytes(msgspec.toml.encode(config))
+    config_file.write_bytes(msgspec.toml.encode(config))
 
 
-def add_or_show(cmd: Literal["add", "show"], file: Path, **kwargs: Any) -> None:
-    """Add a vacation period or display tracking summary.
+def add(
+    name: str,
+    first: str,
+    last: Annotated[Optional[str], doctyper.Option(show_default="Single Day")] = None,  # noqa: UP007
+    config_file: Path = Path("vacation-periods.toml"),
+) -> None:
+    """Add a vacation period.
 
     Args:
-        cmd: Command to execute ("add" or "show")
-        file: Path to configuration file
-        **kwargs: Additional arguments for the specific command
-
-    Raises:
-        FileNotFoundError: If configuration file doesn't exist
-        ValueError: If vacation period validation fails
+        name: Name or description of the vacation period
+        first: First day of the vacation period (ISO format)
+        last: Last day of the vacation period (ISO format)
+        config_file: Path to vacation tracker configuration file
     """
-    if not file.exists():
-        raise FileNotFoundError(
-            f"Configuration file {file} not found. Use 'vacation-tracker new' to create."  # noqa: E501
-        )
+    config = _verify_config(config_file)
 
-    config_content = msgspec.toml.decode(file.read_bytes())
-    config = msgspec.convert(config_content, Config)
+    # Validate date formats
+    try:
+        first_date = date.fromisoformat(first)
+        last_date = date.fromisoformat(last) if last else None
+    except ValueError as e:
+        raise ValueError("Dates must be in ISO format (YYYY-MM-DD)") from e
 
-    if cmd == "show":
-        show(config, kwargs["detailed"])
-        return
-
-    vacation = msgspec.convert(kwargs, Vacation)
+    vacation = msgspec.convert({"name": name, "first": first_date, "last": last_date}, Vacation)
     config.vacation_periods.append(vacation)
     config.verify()
-    file.write_bytes(msgspec.toml.encode(config))
+    config_file.write_bytes(msgspec.toml.encode(config))
 
 
-def cli(argv: Sequence[str] | None = None) -> int:
-    """Command-line interface for vacation tracking.
-
-    Args:
-        argv: Command line arguments (defaults to sys.argv[1:])
-
-    Returns:
-        Exit code (0 for success)
-
-    Raises:
-        ValueError: If unknown command specified
-    """
-    args = parse_args(argv)
-
-    if args.verbose:  # pragma: no cover
-        logging.basicConfig(level=logging.DEBUG)
-
-    if args.cmd == "new":
-        new(args.file, args.days, (args.first_year, args.first_month), args.last_year)
-    elif args.cmd in {"add", "show"}:
-        kwargs = dict(args._get_kwargs())  # noqa: SLF001
-        kwargs.pop("verbose")
-        add_or_show(**kwargs)
-    else:  # pragma: no cover
-        raise ValueError(f"Unknown command: {args.cmd}")
-
-    return 0
+def cli() -> None:  # pragma: no cover
+    """CLI entry point."""
+    app = doctyper.SlimTyper()
+    app.command("new")(new)
+    app.command("add")(add)
+    app.command("show")(show)
+    app()
 
 
 if __name__ == "__main__":
-    raise SystemExit(cli())
+    cli()
