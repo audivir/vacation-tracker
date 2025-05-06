@@ -11,6 +11,7 @@ authors = [{ name = "Tim Hörmann", email = "pypi@audivir.de" }]
 description = "Track number of remaining vacation days."
 readme = "README.md"
 license = "MIT"
+license-files = ["LICENSE"]
 classifiers = ["Programming Language :: Python :: 3"]
 
 [project.urls]
