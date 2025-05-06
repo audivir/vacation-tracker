@@ -14,6 +14,8 @@ license = "MIT"
 classifiers = ["Programming Language :: Python :: 3"]
 
 [project.urls]
+Homepage = "https://github.com/audivir/vacation-tracker"
+Repository = "https://github.com/audivir/vacation-tracker"
 
 [project.optional-dependencies]
 dev = ["ruff", "mypy", "pytest", "coverage[toml]", "vulture"]
