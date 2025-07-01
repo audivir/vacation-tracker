@@ -54,11 +54,20 @@ def assumption_holiday(bavaria_holidays: holidays.HolidayBase) -> Vacation:
     vacation.holidays = bavaria_holidays
     return vacation
 
+@pytest.fixture
+def special_holiday(bavaria_holidays: holidays.HolidayBase) -> Vacation:
+    """Provide an special holiday vacation period."""
+    vacation = Vacation("special", date(2022, 12, 1), special_days={(12,1)})
+    vacation.holidays = bavaria_holidays
+    return vacation
+
 
 @pytest.fixture
 def sample_config(christmas_holiday: Vacation, assumption_holiday: Vacation) -> Config:
     """Provide a sample configuration with two vacation periods."""
-    return Config(2, (2022, 1), (2023, 12), [assumption_holiday, christmas_holiday])
+    return Config(
+        2, "2022-01", "2023-12", [assumption_holiday, christmas_holiday]
+    )
 
 
 @pytest.fixture
@@ -84,12 +93,14 @@ def expected_detailed() -> str:
 """
 
 
-def test_vacation_day_counting(christmas_holiday: Vacation, assumption_holiday: Vacation) -> None:
+def test_vacation_day_counting(christmas_holiday: Vacation, assumption_holiday: Vacation, special_holiday: Vacation) -> None:
     """Verify correct counting of vacation days."""
     assert christmas_holiday.days == 4
     assert str(christmas_holiday) == "25.12-01.01 (4): christmas"
     assert assumption_holiday.days == 0
     assert str(assumption_holiday) == "15.08 (0): assumption"
+    assert special_holiday.days == 0
+    assert str(special_holiday) == "01.12 (0): special"
 
 
 def test_invalid_name() -> None:
@@ -136,22 +147,22 @@ def test_period_verification(christmas_holiday: Vacation) -> None:
 
 
 @pytest.mark.parametrize(
-    ("last_date", "should_error"), [((2022, 2), False), ((2022, 1), True), ((2021, 12), True)]
+    ("last_date", "should_error"), [("2022-02", False), ("2022-01", True), ("2021-12", True)]
 )
 def test_date_range_validation(last_date: tuple[int, int], should_error: bool) -> None:
     """Test configuration date range validation."""
     if should_error:
         with pytest.raises(ValueError, match="Last year must be after first year"):
-            Config(2, (2022, 1), last_date)
+            Config(2, "2022-01", last_date)
     else:
-        config = Config(2, (2022, 1), last_date)
+        config = Config(2, "2022-01", last_date)
         assert isinstance(config, Config)
 
 
 def test_overlapping_periods(christmas_holiday: Vacation) -> None:
     """Verify rejection of overlapping vacation periods."""
     silvester = Vacation("silvester", date(2022, 12, 31))
-    config = Config(2, (2022, 1), (2022, 12), [christmas_holiday, silvester])
+    config = Config(2, "2022-01", "2022-12", [christmas_holiday, silvester])
     with pytest.raises(ValueError, match="Vacation periods cannot overlap"):
         config.verify()
 
@@ -159,12 +170,12 @@ def test_overlapping_periods(christmas_holiday: Vacation) -> None:
 def test_period_within_tracking_range(christmas_holiday: Vacation) -> None:
     """Verify vacation periods stay within tracking range."""
     # Test period before tracking start
-    early_config = Config(2, (2023, 1), (2023, 12), [christmas_holiday])
+    early_config = Config(2, "2023-01", "2023-12", [christmas_holiday])
     with pytest.raises(ValueError, match="First vacation day must be after tracking start"):
         early_config.verify()
 
     # Test period after tracking end
-    late_config = Config(2, (2021, 1), (2021, 12), [christmas_holiday])
+    late_config = Config(2, "2021-01", "2021-12", [christmas_holiday])
     with pytest.raises(ValueError, match="Last vacation day must be before tracking end"):
         late_config.verify()
 
@@ -232,18 +243,21 @@ def test_file_extension_validation() -> None:
         new(2, 2022, 1, config_file=Path("test.txt"))
 
 
-@pytest.mark.parametrize("days", [-1, 0, 32])
+@pytest.mark.parametrize("days", [-1, 32])
 def test_days_per_month_validation(days: int, test_file: Path) -> None:
-    with pytest.raises(ValueError, match="Days per month must be between 1 and 31"):
+    with pytest.raises(msgspec.ValidationError, match="Days per month must be between 0 and 28"):
         new(days, 2022, 1, 2022, 12, config_file=test_file)
 
 
 @pytest.mark.parametrize("month", [-1, 0, 13])
-def test_first_last_month_validation(month: int, test_file: Path) -> None:
-    with pytest.raises(ValueError, match="First month must be between 1 and 12"):
+def test_first_last_month_special_validation(month: int, test_file: Path) -> None:
+    with pytest.raises(msgspec.ValidationError, match="Invalid special day:"):
+        new(2, 2022, 1, 2022, 12, [f"{month:02d}-01"], config_file=test_file)
+
+    with pytest.raises(msgspec.ValidationError, match="Invalid first year:"):
         new(2, 2022, month, 2022, 12, config_file=test_file)
 
-    with pytest.raises(ValueError, match="Last month must be between 1 and 12"):
+    with pytest.raises(msgspec.ValidationError, match="Invalid last year:"):
         new(2, 2022, 1, 2022, month, config_file=test_file)
 
 
@@ -264,11 +278,12 @@ def test_new_file_creation(test_file: Path) -> None:
     content = msgspec.toml.decode(test_file.read_bytes())
     assert content == {
         "days-per-month": 2,
-        "first-year": [2022, 1],
-        "last-year": [2022, 12],
+        "first-year": "2022-01",
+        "last-year": "2022-12",
         "categories": ["public", "catholic"],
         "country": ["DE", "BY"],
         "vacation-periods": [],
+        "special-days": [],
     }
 
 
@@ -311,11 +326,12 @@ def test_file_operations_add(existing_test_file: Path) -> None:
     content = msgspec.toml.decode(existing_test_file.read_bytes())
     assert content == {
         "days-per-month": 2,
-        "first-year": [2022, 1],
-        "last-year": [2022, 12],
+        "first-year": "2022-01",
+        "last-year": "2022-12",
         "categories": ["public", "catholic"],
         "country": ["DE", "BY"],
         "vacation-periods": [{"name": "test", "first": date(2022, 1, 1), "last": date(2022, 1, 2)}],
+        "special-days": [],
     }
 
 

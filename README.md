@@ -21,7 +21,9 @@ pip install vacation-tracker
 First, create a new tracking configuration:
 
 ```bash
-vacation-tracker new --days 2.5 --first-year 2023 --first-month 1
+vacation-tracker new --days 2.5 --first-year 2023 --first-month 1 \
+                     --last-year 2024 --last-month 12 \
+                     --special-days 12-31 --special-days 01-02
 ```
 
 This creates a `vacation-periods.toml` file with your vacation tracking settings. The configuration includes:
@@ -35,10 +37,11 @@ Example configuration:
 
 ```toml
 days-per-month = 2.5
-first-year = [2023, 1]  # Start tracking from January 2023
-last-year = [2024, 12]  # Track until December 2024
+first-year = "2023-01" # Start tracking from January 2023
+last-year = "2024-12"  # Track until December 2024
 country = ["DE", "BY"]  # Germany, Bavaria region
 categories = ["public", "catholic"]  # Holiday categories to consider
+special-days = ["12-31"] # Special days to exclude from vacation calculation
 ```
 
 ## Usage

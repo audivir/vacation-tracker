@@ -13,13 +13,13 @@ import sys
 from collections import defaultdict
 from datetime import date, datetime, timedelta, timezone
 from pathlib import Path
-from typing import TYPE_CHECKING, Annotated, Optional
+from typing import TYPE_CHECKING, Annotated, Literal, Optional
 
 import doctyper
 
 if sys.version_info >= (3, 10):  # pragma: no cover
     from typing import TypeAlias
-else:
+else:  # pragma: no cover
     from typing_extensions import TypeAlias
 import holidays
 import msgspec
@@ -31,7 +31,7 @@ if TYPE_CHECKING:
 
 logger = logging.getLogger(__name__)
 
-__version__ = "0.1.2"
+__version__ = "0.1.3"
 
 # Constants
 TREE_MARKER = " ├─"
@@ -59,6 +59,8 @@ class Vacation(msgspec.Struct, forbid_unknown_fields=True, omit_defaults=True):
     """Last day of the vacation period (optional)"""
     holidays: holidays.HolidayBase | None = None
     """Holiday calendar for day counting"""
+    special_days: set[tuple[int, int]] = {}
+    """List of month-day tuples to be excluded from day counting."""
 
     def __post_init__(self) -> None:
         """Validate vacation period dates."""
@@ -85,6 +87,10 @@ class Vacation(msgspec.Struct, forbid_unknown_fields=True, omit_defaults=True):
 
         for add in range(delta.days + 1):
             current_date = self.first + timedelta(days=add)
+
+            if (current_date.month, current_date.day) in self.special_days:
+                logger.debug("%s skipped: special day", current_date.strftime("%d.%m.%Y"))
+                continue
 
             if current_date.weekday() in WEEKEND_DAYS:
                 logger.debug("%s skipped: weekend", current_date.strftime("%d.%m.%Y"))
@@ -133,8 +139,10 @@ class Vacation(msgspec.Struct, forbid_unknown_fields=True, omit_defaults=True):
         if on < self.first or on >= self.real_last:
             return (self,)
 
-        before = Vacation(self.name, self.first, on, self.holidays)
-        after = Vacation(self.name, on + timedelta(days=1), self.real_last, self.holidays)
+        before = Vacation(self.name, self.first, on, self.holidays, self.special_days)
+        after = Vacation(
+            self.name, on + timedelta(days=1), self.real_last, self.holidays, self.special_days
+        )
         return before, after
 
     def verify(self) -> tuple[int, date]:
@@ -169,22 +177,28 @@ class Config(
         "first_year": "first-year",
         "last_year": "last-year",
         "vacation_periods": "vacation-periods",
+        "special_days": "special-days",
+        "pre_entitlement": "pre-entitlement",
     },
 ):
     """Configuration for vacation tracking."""
 
     days_per_month: float | int
     """Vacation days earned per month"""
-    first_year: tuple[int, MonthSpecifier]
-    """(year, month) tuple for start of tracking"""
-    last_year: tuple[int, MonthSpecifier]
-    """(year, month) tuple for end of tracking"""
+    first_year: str
+    """Isoformat-like year-month string for start of tracking"""
+    last_year: str
+    """Isoformat-like year-month tuple for end of tracking"""
     vacation_periods: list[Vacation] = []
     """List of vacation periods to track"""
     country: str | tuple[str, str | None] = ("DE", "BY")
     """Country code(s) for holiday calendar"""
     categories: tuple[str, ...] = ("public", "catholic")
     """Categories of holidays to include"""
+    special_days: list[str] = []
+    """List of "month-day" strings which are vacation days but not holidays."""
+    # pre_entitlement: int = 0 # noqa: ERA001
+    # """Number of days to include before the start of tracking"""
 
     @property
     def holidays(self) -> holidays.HolidayBase:
@@ -193,10 +207,43 @@ class Config(
             self.country = (self.country, None)
         return holidays.country_holidays(*self.country, categories=self.categories)
 
+    def _parse_year(self, attr: Literal["first_year", "last_year"]) -> tuple[int, int]:
+        """Parse year-month string into year and month."""
+        date_str: str = getattr(self, attr)
+        try:
+            full_date = date.fromisoformat(f"{date_str}-01")
+        except ValueError as e:
+            raise ValueError(f"Invalid {attr.replace('_', ' ')}: {date_str}") from e
+        return (full_date.year, full_date.month)
+
+    @property
+    def parsed_first_year(self) -> tuple[int, int]:
+        """Parsed first year from configuration."""
+        return self._parse_year("first_year")
+
+    @property
+    def parsed_last_year(self) -> tuple[int, int]:
+        """Parsed last year from configuration."""
+        return self._parse_year("last_year")
+
+    @property
+    def parsed_special_days(self) -> set[tuple[int, int]]:
+        """Parse special days into date objects."""
+        dates: list[date] = []
+        try:
+            for elem in self.special_days:
+                dates.append(date.fromisoformat(f"1970-{elem}"))
+        except ValueError as e:
+            raise ValueError(f"Invalid special day: {elem}") from e
+        return {(date.month, date.day) for date in dates}
+
     def __post_init__(self) -> None:
         """Validate configuration dates."""
-        if self.last_year <= self.first_year:
+        if not 0 <= self.days_per_month <= 28:  # noqa: PLR2004
+            raise ValueError("Days per month must be between 0 and 28")
+        if self.parsed_last_year <= self.parsed_first_year:
             raise ValueError("Last year must be after first year")
+        self.parsed_special_days  # Validate special days # noqa: B018
 
     def verify(self) -> None:
         """Verify vacation periods for overlaps and date range constraints."""
@@ -214,13 +261,13 @@ class Config(
         first_period = self.vacation_periods[0]
         last_period = self.vacation_periods[-1]
 
-        if first_period.first < date(*self.first_year, 1):
+        if first_period.first < date(*self.parsed_first_year, 1):
             raise ValueError("First vacation day must be after tracking start")
 
         last_tracking_date = (
-            date(self.last_year[0] + 1, 1, 1)
-            if self.last_year[1] == 12  # noqa: PLR2004
-            else date(self.last_year[0], self.last_year[1] + 1, 1)
+            date(self.parsed_last_year[0] + 1, 1, 1)
+            if self.parsed_last_year[1] == 12  # noqa: PLR2004
+            else date(self.parsed_last_year[0], self.parsed_last_year[1] + 1, 1)
         )
 
         if last_period.real_last >= last_tracking_date:
@@ -232,8 +279,8 @@ class Config(
         Returns:
             Dictionary mapping years to (entitlement, months) tuples
         """
-        first_year, first_month = self.first_year
-        last_year, last_month = self.last_year
+        first_year, first_month = self.parsed_first_year
+        last_year, last_month = self.parsed_last_year
         entitlements: dict[int, tuple[float | int, int]] = {}
 
         for year in range(first_year, last_year + 1):
@@ -242,6 +289,8 @@ class Config(
             months = 1 + curr_last_month - curr_first_month
 
             entitlement = months * self.days_per_month
+            # if year == first_year:
+            #     entitlement += self.pre_entitlement # noqa: ERA001
             if isinstance(entitlement, float) and entitlement.is_integer():  # pragma: no cover
                 entitlement = int(entitlement)
 
@@ -260,6 +309,7 @@ class Config(
         periods_by_year: dict[int, list[Vacation]] = defaultdict(list)
         for period in self.vacation_periods:
             period.holidays = self.holidays
+            period.special_days = self.parsed_special_days
             current: Vacation | None = period
 
             for year in range(period.first.year, period.real_last.year + 1):
@@ -406,10 +456,13 @@ def show(detailed: bool = False, config_file: Path = Path("vacation-periods.toml
 
 def new(
     days: float,
-    first_year: int,
-    first_month: int,
+    first_year: int = datetime.now(tz=timezone.utc).year,
+    first_month: int = 1,
     last_year: int = datetime.now(tz=timezone.utc).year,
     last_month: int = 12,
+    special_days: list[str] | None = None,
+    # pre_entitlement: int = 0, # noqa: ERA001
+    # pre_entitlement: Number of vacation days earned before tracking starts
     config_file: Path = Path("vacation-periods.toml"),
 ) -> None:
     """Create a new vacation tracking configuration file.
@@ -420,6 +473,9 @@ def new(
         first_month: First month to track vacation days
         last_year: Last year to track vacation days
         last_month: Last month to track vacation days
+        special_days: List of days to exclude from vacation days
+            as isoformat-like month-day strings (e.g. "01-01")
+        
         config_file: Path to the vacation tracking configuration file
 
     Raises:
@@ -431,18 +487,14 @@ def new(
         )
     if config_file.suffix != ".toml":
         raise ValueError("Configuration file must have .toml extension")
-    if not 0 < days <= 31:  # noqa: PLR2004
-        raise ValueError("Days per month must be between 1 and 31")
-    if not 1 <= first_month <= 12:  # noqa: PLR2004
-        raise ValueError("First month must be between 1 and 12")
-    if not 1 <= last_month <= 12:  # noqa: PLR2004
-        raise ValueError("Last month must be between 1 and 12")
 
     config = msgspec.convert(
         {
             "days-per-month": days,
-            "first-year": (first_year, first_month),
-            "last-year": (last_year, last_month),
+            "first-year": f"{first_year:02d}-{first_month:02d}",
+            "last-year": f"{last_year:02d}-{last_month:02d}",
+            "special-days": special_days or [],
+            # "pre-entitlement": pre_entitlement,
         },
         Config,
     )
