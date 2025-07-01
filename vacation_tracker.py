@@ -18,9 +18,9 @@ from typing import TYPE_CHECKING, Annotated, Literal, Optional
 import doctyper
 
 if sys.version_info >= (3, 10):  # pragma: no cover
-    from typing import TypeAlias
+    pass
 else:  # pragma: no cover
-    from typing_extensions import TypeAlias
+    pass
 import holidays
 import msgspec
 import polars as pl
@@ -31,15 +31,12 @@ if TYPE_CHECKING:
 
 logger = logging.getLogger(__name__)
 
-__version__ = "0.1.3"
+__version__ = "0.1.4"
 
 # Constants
 TREE_MARKER = " ├─"
 TREE_LAST = " └─"
 WEEKEND_DAYS = (5, 6)  # Saturday and Sunday
-
-MonthSpecifier: TypeAlias = Annotated[int, msgspec.Meta(ge=1, le=12)]
-"""Integer between 1 and 12 (including)."""
 
 
 class Vacation(msgspec.Struct, forbid_unknown_fields=True, omit_defaults=True):
@@ -399,7 +396,24 @@ def _verify_config(file: Path) -> Config:
             f"Configuration file {file} not found. Use 'vacation-tracker new' to create."
         )
     content = msgspec.toml.decode(file.read_bytes())
-    return msgspec.convert(content, Config)
+
+    # backwards compatibility with old config format
+    changed = False
+    if "special-days" not in content:
+        changed = True
+    for key in ("first-year", "last-year"):
+        value = content.get(key)
+        if isinstance(value, list) and len(value) == 2 and all(isinstance(v, int) for v in value):  # noqa: PLR2004
+            changed = True
+            content[key] = f"{value[0]:02d}-{value[1]:02d}"
+
+    config = msgspec.convert(content, Config)
+
+    if changed:
+        file.write_bytes(msgspec.toml.encode(config))
+        print("Updated configuration file to new format.")  # noqa: T201
+
+    return config
 
 
 def show(detailed: bool = False, config_file: Path = Path("vacation-periods.toml")) -> None:
@@ -475,7 +489,6 @@ def new(
         last_month: Last month to track vacation days
         special_days: List of days to exclude from vacation days
             as isoformat-like month-day strings (e.g. "01-01")
-        
         config_file: Path to the vacation tracking configuration file
 
     Raises:

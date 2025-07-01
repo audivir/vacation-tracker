@@ -14,7 +14,16 @@ import holidays
 import msgspec
 import pytest
 
-from vacation_tracker import Config, Vacation, _track_single_period, add, new, show, track_periods
+from vacation_tracker import (
+    Config,
+    Vacation,
+    _track_single_period,
+    _verify_config,
+    add,
+    new,
+    show,
+    track_periods,
+)
 
 if TYPE_CHECKING:
     from collections.abc import Callable
@@ -54,10 +63,11 @@ def assumption_holiday(bavaria_holidays: holidays.HolidayBase) -> Vacation:
     vacation.holidays = bavaria_holidays
     return vacation
 
+
 @pytest.fixture
 def special_holiday(bavaria_holidays: holidays.HolidayBase) -> Vacation:
     """Provide an special holiday vacation period."""
-    vacation = Vacation("special", date(2022, 12, 1), special_days={(12,1)})
+    vacation = Vacation("special", date(2022, 12, 1), special_days={(12, 1)})
     vacation.holidays = bavaria_holidays
     return vacation
 
@@ -65,9 +75,7 @@ def special_holiday(bavaria_holidays: holidays.HolidayBase) -> Vacation:
 @pytest.fixture
 def sample_config(christmas_holiday: Vacation, assumption_holiday: Vacation) -> Config:
     """Provide a sample configuration with two vacation periods."""
-    return Config(
-        2, "2022-01", "2023-12", [assumption_holiday, christmas_holiday]
-    )
+    return Config(2, "2022-01", "2023-12", [assumption_holiday, christmas_holiday])
 
 
 @pytest.fixture
@@ -93,7 +101,9 @@ def expected_detailed() -> str:
 """
 
 
-def test_vacation_day_counting(christmas_holiday: Vacation, assumption_holiday: Vacation, special_holiday: Vacation) -> None:
+def test_vacation_day_counting(
+    christmas_holiday: Vacation, assumption_holiday: Vacation, special_holiday: Vacation
+) -> None:
     """Verify correct counting of vacation days."""
     assert christmas_holiday.days == 4
     assert str(christmas_holiday) == "25.12-01.01 (4): christmas"
@@ -275,6 +285,30 @@ def test_new_file_creation(test_file: Path) -> None:
     new(2, 2022, 1, 2022, 12, config_file=test_file)
 
     assert test_file.is_file()
+    content = msgspec.toml.decode(test_file.read_bytes())
+    assert content == {
+        "days-per-month": 2,
+        "first-year": "2022-01",
+        "last-year": "2022-12",
+        "categories": ["public", "catholic"],
+        "country": ["DE", "BY"],
+        "vacation-periods": [],
+        "special-days": [],
+    }
+
+
+def test_verify_old_config(test_file: Path) -> None:
+    """Test the backward compatibility of the old configuration file format."""
+    old_style = {
+        "days-per-month": 2,
+        "first-year": [2022, 1],
+        "last-year": [2022, 12],
+        "categories": ["public", "catholic"],
+        "country": ["DE", "BY"],
+        "vacation-periods": [],
+    }
+    test_file.write_bytes(msgspec.toml.encode(old_style))
+    _verify_config(test_file)
     content = msgspec.toml.decode(test_file.read_bytes())
     assert content == {
         "days-per-month": 2,
