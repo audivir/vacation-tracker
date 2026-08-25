@@ -8,6 +8,10 @@ A command-line tool to track and manage vacation periods with support for holida
 - Year transitions and expiration dates
 - Detailed summaries and reporting
 
+## Prerequisites
+
+- Python 3.10 or later
+
 ## Installation
 
 Install using pip:
@@ -51,7 +55,7 @@ special-days = ["12-31"] # Special days to exclude from vacation calculation
 Add single day vacations:
 
 ```bash
-vacation-tracker add "Doctor Appointment" --first 2023-05-15 
+vacation-tracker add "Doctor Appointment" --first 2023-05-15
 ```
 
 Add multi-day periods:
@@ -69,6 +73,7 @@ vacation-tracker show
 ```
 
 This displays a table with:
+
 - Yearly entitlements
 - Utilized days
 - Remaining days
@@ -81,6 +86,7 @@ vacation-tracker show --detailed
 ```
 
 Example output:
+
 ```
  Year  Months  Entitlement  Real Util  Adj Util  Remaining
  2023  12      30           25         25        5 (expired)
@@ -101,3 +107,7 @@ Example output:
 - Configurable holiday categories
 - Support for partial day accumulation (e.g., 2.5 days/month)
 - Detailed vacation period tracking and reporting
+
+## License
+
+MIT, see `LICENSE`.

@@ -1,26 +1,14 @@
-"""Track and manage vacation periods with support for holidays and date ranges.
-
-This module provides functionality to track vacation periods, calculate available days,
-and handle holiday schedules across different countries. It supports command-line
-interface operations for creating new tracking periods, adding vacation entries,
-and displaying vacation summaries.
-"""
+"""Tracks vacation periods, available days, and country-specific holiday schedules."""
 
 from __future__ import annotations
 
 import logging
-import sys
 from collections import defaultdict
 from datetime import date, datetime, timedelta, timezone
 from pathlib import Path
-from typing import TYPE_CHECKING, Annotated, Literal, Optional
+from typing import TYPE_CHECKING, Annotated, Literal
 
 import doctyper
-
-if sys.version_info >= (3, 10):  # pragma: no cover
-    pass
-else:  # pragma: no cover
-    pass
 import holidays
 import msgspec
 import polars as pl
@@ -31,7 +19,7 @@ if TYPE_CHECKING:
 
 logger = logging.getLogger(__name__)
 
-__version__ = "0.1.4"
+__version__ = "0.1.5"
 
 # Constants
 TREE_MARKER = " ├─"
@@ -40,27 +28,21 @@ WEEKEND_DAYS = (5, 6)  # Saturday and Sunday
 
 
 class Vacation(msgspec.Struct, forbid_unknown_fields=True, omit_defaults=True):
-    """Represents a single vacation period with start and end dates.
-
-    This class handles vacation period validation, holiday checking, and day counting.
-
-    Raises:
-        ValueError: If last date is before first date
-    """
+    """Stores a single vacation period with start and end dates."""
 
     name: str
-    """Name or description of the vacation period"""
+    """Name or description of the vacation period."""
     first: date
-    """First day of the vacation period"""
+    """First day of the vacation period."""
     last: date | None = None
-    """Last day of the vacation period (optional)"""
+    """Last day of the vacation period, or None if unspecified."""
     holidays: holidays.HolidayBase | None = None
-    """Holiday calendar for day counting"""
-    special_days: set[tuple[int, int]] = {}
-    """List of month-day tuples to be excluded from day counting."""
+    """Holiday calendar used for day counting."""
+    special_days: set[tuple[int, int]] = set()
+    """Set of month-day tuples to exclude from day counting."""
 
     def __post_init__(self) -> None:
-        """Validate vacation period dates."""
+        """Validates vacation period dates."""
         if not self.name.strip():
             raise ValueError("Vacation name cannot be empty")
         if self.last and self.last < self.first:
@@ -68,13 +50,10 @@ class Vacation(msgspec.Struct, forbid_unknown_fields=True, omit_defaults=True):
 
     @property
     def days(self) -> int:
-        """Calculate the number of working days in the vacation period.
-
-        Returns:
-            Number of working days (excluding weekends and holidays)
+        """Calculates the number of working days in the vacation period.
 
         Raises:
-            ValueError: If holidays calendar is not set
+            ValueError: If the holidays calendar is not set.
         """
         if self.holidays is None:
             raise ValueError("Holidays calendar must be set before counting days")
@@ -105,16 +84,12 @@ class Vacation(msgspec.Struct, forbid_unknown_fields=True, omit_defaults=True):
 
     @property
     def real_last(self) -> date:
-        """Get the actual end date of the vacation period.
-
-        Returns:
-            The last date if set, otherwise the first date
-        """
+        """Returns the actual end date of the vacation period."""
         return self.first if self.last is None else self.last
 
     @override
     def __str__(self) -> str:
-        """Format vacation period as a string with dates and days count."""
+        """Formats the vacation period as a string with dates and day count."""
         first_day = self.first.strftime("%d.%m")
         last_day = self.real_last.strftime("%d.%m")
 
@@ -124,14 +99,14 @@ class Vacation(msgspec.Struct, forbid_unknown_fields=True, omit_defaults=True):
         return f"{first_day}-{last_day} ({self.days}): {self.name}"
 
     def split(self, on: date) -> tuple[Vacation] | tuple[Vacation, Vacation]:
-        """Split the vacation period at the specified date.
+        """Splits the vacation period at the specified date.
 
         Args:
-            on: Date to split the vacation period
+            on: Date at which to split the vacation period.
 
         Returns:
-            Tuple containing either the original vacation (if no split needed)
-            or two new vacation periods
+            The original vacation if no split is needed, or two new vacation
+            periods.
         """
         if on < self.first or on >= self.real_last:
             return (self,)
@@ -143,17 +118,13 @@ class Vacation(msgspec.Struct, forbid_unknown_fields=True, omit_defaults=True):
         return before, after
 
     def verify(self) -> tuple[int, date]:
-        """Verify vacation period constraints.
-
-        Checks that the period:
-        - Stays within the same year
-        - Doesn't cross September 30th
+        """Verifies that the vacation period stays within the same year and does not cross Sep 30.
 
         Returns:
-            Tuple of (year, expiration_date)
+            Tuple of (year, expiration_date).
 
         Raises:
-            ValueError: If period crosses year boundary or September 30th
+            ValueError: If the period crosses a year boundary or September 30th.
         """
         year = self.first.year
         if year != self.real_last.year:
@@ -178,34 +149,34 @@ class Config(
         "pre_entitlement": "pre-entitlement",
     },
 ):
-    """Configuration for vacation tracking."""
+    """Stores configuration for vacation tracking."""
 
     days_per_month: float | int
-    """Vacation days earned per month"""
+    """Vacation days earned per month."""
     first_year: str
-    """Isoformat-like year-month string for start of tracking"""
+    """Year-month string marking the start of tracking."""
     last_year: str
-    """Isoformat-like year-month tuple for end of tracking"""
+    """Year-month string marking the end of the tracking period."""
     vacation_periods: list[Vacation] = []
-    """List of vacation periods to track"""
+    """List of vacation periods to track."""
     country: str | tuple[str, str | None] = ("DE", "BY")
-    """Country code(s) for holiday calendar"""
+    """Country code(s) for the holiday calendar."""
     categories: tuple[str, ...] = ("public", "catholic")
-    """Categories of holidays to include"""
+    """Categories of holidays to include in the calendar."""
     special_days: list[str] = []
-    """List of "month-day" strings which are vacation days but not holidays."""
+    """List of "month-day" strings for vacation days that are not holidays."""
     # pre_entitlement: int = 0 # noqa: ERA001
     # """Number of days to include before the start of tracking"""
 
     @property
     def holidays(self) -> holidays.HolidayBase:
-        """Get holiday calendar for the configured country."""
+        """Returns the holiday calendar for the configured country."""
         if isinstance(self.country, str):  # pragma: no cover
             self.country = (self.country, None)
         return holidays.country_holidays(*self.country, categories=self.categories)
 
     def _parse_year(self, attr: Literal["first_year", "last_year"]) -> tuple[int, int]:
-        """Parse year-month string into year and month."""
+        """Parses a year-month string into a year and month tuple."""
         date_str: str = getattr(self, attr)
         try:
             full_date = date.fromisoformat(f"{date_str}-01")
@@ -215,27 +186,30 @@ class Config(
 
     @property
     def parsed_first_year(self) -> tuple[int, int]:
-        """Parsed first year from configuration."""
+        """Returns the parsed first year from configuration."""
         return self._parse_year("first_year")
 
     @property
     def parsed_last_year(self) -> tuple[int, int]:
-        """Parsed last year from configuration."""
+        """Returns the parsed last year from configuration."""
         return self._parse_year("last_year")
+
+    @staticmethod
+    def _parse_special_day(day: str) -> date:
+        """Parses a single "month-day" string into a date."""
+        try:
+            return date.fromisoformat(f"1970-{day}")
+        except ValueError as e:
+            raise ValueError(f"Invalid special day: {day}") from e
 
     @property
     def parsed_special_days(self) -> set[tuple[int, int]]:
-        """Parse special days into date objects."""
-        dates: list[date] = []
-        try:
-            for elem in self.special_days:
-                dates.append(date.fromisoformat(f"1970-{elem}"))
-        except ValueError as e:
-            raise ValueError(f"Invalid special day: {elem}") from e
+        """Parses special days into a set of (month, day) tuples."""
+        dates = [self._parse_special_day(elem) for elem in self.special_days]
         return {(date.month, date.day) for date in dates}
 
     def __post_init__(self) -> None:
-        """Validate configuration dates."""
+        """Validates configuration dates and raises `ValueError` on invalid values."""
         if not 0 <= self.days_per_month <= 28:  # noqa: PLR2004
             raise ValueError("Days per month must be between 0 and 28")
         if self.parsed_last_year <= self.parsed_first_year:
@@ -243,7 +217,7 @@ class Config(
         self.parsed_special_days  # Validate special days # noqa: B018
 
     def verify(self) -> None:
-        """Verify vacation periods for overlaps and date range constraints."""
+        """Verifies vacation periods for overlaps and date range constraints."""
         self.vacation_periods.sort(key=lambda x: x.first)
 
         prev_last = date.min
@@ -271,11 +245,7 @@ class Config(
             raise ValueError("Last vacation day must be before tracking end")
 
     def _get_entitlement(self) -> dict[int, tuple[float | int, int]]:
-        """Calculate vacation day entitlements per year.
-
-        Returns:
-            Dictionary mapping years to (entitlement, months) tuples
-        """
+        """Calculates vacation day entitlements per year."""
         first_year, first_month = self.parsed_first_year
         last_year, last_month = self.parsed_last_year
         entitlements: dict[int, tuple[float | int, int]] = {}
@@ -296,11 +266,7 @@ class Config(
         return entitlements
 
     def _order_periods(self) -> tuple[list[Vacation], dict[int, list[Vacation]]]:
-        """Order and split vacation periods by year.
-
-        Returns:
-            Tuple of (all_periods, periods_by_year)
-        """
+        """Orders and splits vacation periods by year."""
         self.verify()
 
         periods_by_year: dict[int, list[Vacation]] = defaultdict(list)
@@ -331,16 +297,7 @@ class Config(
 def _track_single_period(
     year: int, days: float, track_dict: MutableMapping[int, float | int]
 ) -> float | int:
-    """Track vacation days for a single year.
-
-    Args:
-        year: Year to track days for
-        days: Number of days to track
-        track_dict: Dictionary of available days by year
-
-    Returns:
-        Remaining days to track
-    """
+    """Tracks vacation days for a single year and returns the remaining days."""
     if (available := track_dict.get(year, 0)) > 0:
         if available < days:
             used_days = available
@@ -356,14 +313,14 @@ def _track_single_period(
 def track_periods(
     periods: Sequence[Vacation], track_dict: MutableMapping[int, float | int]
 ) -> None:
-    """Track multiple vacation periods against available days.
+    """Tracks multiple vacation periods against available days.
 
     Args:
-        periods: Sequence of vacation periods to track
-        track_dict: Dictionary of available days by year
+        periods: Sequence of vacation periods to track.
+        track_dict: Mapping of available days by year.
 
     Raises:
-        ValueError: If there are insufficient vacation days
+        ValueError: If there are insufficient vacation days.
     """
     for period in periods:
         year, expiration_date = period.verify()
@@ -379,18 +336,7 @@ def track_periods(
 
 
 def _verify_config(file: Path) -> Config:
-    """Verify that the configuration file exists and is valid.
-
-    Args:
-        file: Path to the configuration file
-
-    Returns:
-        The configuration object if valid
-
-    Raises:
-        FileNotFoundError: If configuration file doesn't exist
-        ValidationError: If configuration file is invalid
-    """
+    """Verifies that the configuration file exists and is valid."""
     if not file.exists():
         raise FileNotFoundError(
             f"Configuration file {file} not found. Use 'vacation-tracker new' to create."
@@ -417,12 +363,7 @@ def _verify_config(file: Path) -> Config:
 
 
 def show(detailed: bool = False, config_file: Path = Path("vacation-periods.toml")) -> None:
-    """Display vacation period summary (and details).
-
-    Args:
-        detailed: Whether to show individual vacation periods
-        config_file: Path to vacation tracking configuration
-    """
+    """Displays a vacation period summary, with optional per-period details."""
     config = _verify_config(config_file)
     periods, periods_by_year = config._order_periods()  # noqa: SLF001
     entitlements = config._get_entitlement()  # noqa: SLF001
@@ -459,7 +400,7 @@ def show(detailed: bool = False, config_file: Path = Path("vacation-periods.toml
     lines = str(show_df).splitlines()
     print(lines[0].rstrip("\n "))  # noqa: T201
 
-    for row, line in zip(show_df.iter_rows(named=True), lines[1:]):
+    for row, line in zip(show_df.iter_rows(named=True), lines[1:], strict=True):
         print(line.rstrip("\n "))  # noqa: T201
         if detailed:
             year_periods = periods_by_year[row["Year"]]
@@ -479,20 +420,20 @@ def new(
     # pre_entitlement: Number of vacation days earned before tracking starts
     config_file: Path = Path("vacation-periods.toml"),
 ) -> None:
-    """Create a new vacation tracking configuration file.
+    """Creates a new vacation tracking configuration file.
 
     Args:
-        days: Number of vacation days earned per month
-        first_year: First year to track vacation days
-        first_month: First month to track vacation days
-        last_year: Last year to track vacation days
-        last_month: Last month to track vacation days
-        special_days: List of days to exclude from vacation days
-            as isoformat-like month-day strings (e.g. "01-01")
-        config_file: Path to the vacation tracking configuration file
+        days: Number of vacation days earned per month.
+        first_year: First year to track vacation days.
+        first_month: First month to track vacation days.
+        last_year: Last year to track vacation days.
+        last_month: Last month to track vacation days.
+        special_days: List of days to exclude from vacation days as
+            isoformat-like month-day strings (e.g. "01-01").
+        config_file: Path to the vacation tracking configuration file.
 
     Raises:
-        FileExistsError: If configuration file already exists
+        FileExistsError: If configuration file already exists.
     """
     if config_file.exists():
         raise FileExistsError(
@@ -517,16 +458,16 @@ def new(
 def add(
     name: str,
     first: str,
-    last: Annotated[Optional[str], doctyper.Option(show_default="Single Day")] = None,  # noqa: UP007
+    last: Annotated[str | None, doctyper.Option(show_default="Single Day")] = None,
     config_file: Path = Path("vacation-periods.toml"),
 ) -> None:
-    """Add a vacation period.
+    """Adds a vacation period to the configuration file.
 
     Args:
-        name: Name or description of the vacation period
-        first: First day of the vacation period (ISO format)
-        last: Last day of the vacation period (ISO format)
-        config_file: Path to vacation tracker configuration file
+        name: Name or description of the vacation period.
+        first: First day of the vacation period in ISO format.
+        last: Last day of the vacation period in ISO format.
+        config_file: Path to the vacation tracker configuration file.
     """
     config = _verify_config(config_file)
 
@@ -544,7 +485,7 @@ def add(
 
 
 def cli() -> None:  # pragma: no cover
-    """CLI entry point."""
+    """CLI entry point for the doctyper application."""
     app = doctyper.SlimTyper()
     app.command("new")(new)
     app.command("add")(add)
